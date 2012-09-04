@@ -82,7 +82,7 @@ handle_cast(_Msg, State) ->
 handle_info(alive, #state{mpid = Pid } = State) ->
 	YesFun = fun() -> {noreply, State} end,
 	NoFun = fun() ->  {stop, normal, State} end, %%%% STOP SIGNAL!!!
-	babbler_tools:exec_if_alive(Pid, YesFun, NoFun);
+	bullet_tools:exec_if_alive(Pid, YesFun, NoFun);
 
 %% if not POST
 handle_info({init, Pid, _Opts}, #state{mqueue = []} = State) ->
@@ -126,12 +126,12 @@ send_message(Pid, Message) ->
 	YesFun = fun() -> self() ! skip_keep_alive,
 					  Pid ! {send, Message} end,
 	NoFun  = fun() -> ok  end,
-	babbler_tools:exec_if_alive(Pid, YesFun, NoFun).
+	bullet_tools:exec_if_alive(Pid, YesFun, NoFun).
 
 keep_alive_msg() ->
 	T = calendar:datetime_to_gregorian_seconds(erlang:localtime()),
-	babbler_tools:json_encode([{ts, T}]).
+	bullet_tools:json_encode([{ts, T}]).
 	
 start_keep_alive() ->
-	KeepAliveInterval = babbler:envdef(keep_alive_interval, 10000),
+	KeepAliveInterval = bullet:envdef(keep_alive_interval, 10000),
 	timer:send_after(KeepAliveInterval, keep_alive).
