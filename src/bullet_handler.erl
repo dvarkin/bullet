@@ -87,16 +87,19 @@ info({reply, Pid, Data}, Req, {poll, Pid}) ->
 
 terminate(_, _) -> ok. 
 
+%% utils
 
-%% utils:
-
-try_decode_pid(<<EncKey:?KeyLength/binary, Data/binary>>) ->	
-	Key = crypto:blowfish_ecb_decrypt(?Secret, EncKey),
-	Binary = <<Key/binary, Data/binary>>,
-	try binary_to_term(Binary) of
-		P when is_pid(P)	-> {ok, P};
-		_Other 				-> undefined
-	catch _:_ 				-> undefined
+try_decode_pid(SSID) when is_binary(SSID) ->
+	case base64:decode(replace_char(SSID, $-, $/)) of
+		<<EncKey:?KeyLength/binary, Data/binary>> ->
+			Key = crypto:blowfish_ecb_decrypt(?Secret, EncKey),
+			Binary = <<Key/binary, Data/binary>>,
+			try binary_to_term(Binary) of
+				P when is_pid(P)	-> P;
+				_Other 				-> undefined
+			catch _:_ 				-> undefined
+			end;
+		_Other	-> undefined
 	end;
 try_decode_pid(_)	-> undefined.
 
@@ -104,7 +107,11 @@ encode_pid(Pid) when is_pid(Pid) ->
 	Binary = term_to_binary(Pid),
 	<<EncKey:?KeyLength/binary, Rest/binary>> = Binary,
 	Key = crypto:blowfish_ecb_encrypt(?Secret, EncKey),
-	<<Key/binary, Rest/binary>>.
+	replace_char(base64:encode(<<Key/binary, Rest/binary>>), $/, $-).
+
+replace_char(<<P, Rest/binary>>, P, C) -> R = replace_char(Rest, P, C), <<C, R/binary>>;
+replace_char(<<X, Rest/binary>>, P, C) -> R = replace_char(Rest, P, C), <<X, R/binary>>;
+replace_char(<<>>, _, _) -> <<>>.
 
 %% Websocket.
 
