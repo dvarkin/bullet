@@ -21,4 +21,5 @@
 
 start() ->
 	ok = application:start(cowboy),
+	ok = application:start(bullet),
 	ok = application:start(clock).

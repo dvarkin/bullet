@@ -3,34 +3,34 @@
 %% @doc Stream handler for clock synchronizing.
 -module(stream_handler).
 
--export([init/4]).
--export([stream/3]).
--export([info/3]).
--export([terminate/2]).
+-export([init/1]).
+-export([stream/2]).
+-export([info/2]).
+-export([terminate/1]).
 
 -define(PERIOD, 1000).
 
-init(_Transport, Req, _Opts, _Active) ->
+init(_Opts) ->
 	io:format("bullet init~n"),
 	_ = erlang:send_after(?PERIOD, self(), refresh),
-	{ok, Req, undefined}.
+	{ok, undefined}.
 
-stream(<<"ping">>, Req, State) ->
+stream(<<"ping">>, State) ->
 	io:format("ping received~n"),
-	{reply, <<"pong">>, Req, State};
-stream(Data, Req, State) ->
+	{reply, <<"pong">>, State};
+stream(Data, State) ->
 	io:format("stream received ~s~n", [Data]),
-	{ok, Req, State}.
+	{ok, State}.
 
-info(refresh, Req, State) ->
+info(refresh, State) ->
 	_ = erlang:send_after(?PERIOD, self(), refresh),
 	DateTime = cowboy_clock:rfc1123(),
 	io:format("clock refresh timeout: ~s~n", [DateTime]),
-	{reply, DateTime, Req, State};
-info(Info, Req, State) ->
+	{reply, DateTime, State};
+info(Info, State) ->
 	io:format("info received ~p~n", [Info]),
-	{ok, Req, State}.
+	{ok, State}.
 
-terminate(_Req, _State) ->
+terminate(_State) ->
 	io:format("bullet terminate~n"),
 	ok.
