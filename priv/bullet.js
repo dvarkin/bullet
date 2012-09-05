@@ -1,5 +1,5 @@
 /*
-	Copyright (c) 2011-2012, Loïc Hoguin <essen@ninenines.eu>
+	Copyright (c) 2011-2012, LoÃ¯c Hoguin <essen@ninenines.eu>
 
 	Permission to use, copy, modify, and/or distribute this software for any
 	purpose with or without fee is hereby granted, provided that the above
@@ -37,6 +37,8 @@
 	var OPEN = 1;
 	var CLOSING = 2;
 	var CLOSED = 3;
+	var SSID = false;
+	var STATUS = false;
 
 	var transports = {
 		/**
@@ -46,14 +48,18 @@
 		*/
 		websocket: function(){
 			var ret = false;
-
+			
 			if (window.WebSocket){
 				ret = window.WebSocket;
 			}
 
-			if (window.MozWebSocket
+			/*if (window.MozWebSocket
 					&& navigator.userAgent.indexOf("Firefox/6.0") == -1){
 				ret = window.MozWebSocket;
+			}*/
+
+			if (navigator.userAgent.indexOf("Firefox") > 0){
+				ret = false;
 			}
 
 			if (ret){
@@ -75,6 +81,7 @@
 					}
 
 					var fakeurl = url.replace('ws:', 'http:').replace('wss:', 'https:');
+					if (SSID) fakeurl += '?ssid='+ encodeURIComponent(SSID);
 
 					$.ajax({
 						async: false,
@@ -97,6 +104,8 @@
 				},
 				close: function(){
 					this.readyState = CLOSED;
+					if (STATUS) {STATUS = false; stream.ondisconnect();}
+					STATUS = false;
 					xhr.abort();
 					clearTimeout(timeout);
 					fake.onclose();
@@ -109,23 +118,26 @@
 
 			function poll(){
 				var fakeurl = url.replace('ws:', 'http:').replace('wss:', 'https:');
+				if (SSID) fakeurl += '?ssid='+ encodeURIComponent(SSID);
 
 				xhr = $.ajax({
 					type: 'GET',
 					cache: false,
 					url: fakeurl,
 					dataType: 'text',
-					data: {},
 					headers: {'X-Socket-Transport': 'xhrPolling'},
 					success: function(data){
 						if (fake.readyState == CONNECTING){
 							fake.readyState = OPEN;
+							STATUS = true;
+							SSID = data;
 							fake.onopen(fake);
 						}
 						// Connection might have closed without a response body
-						if (data.length != 0){
+						else if (data.length != 0){ 
 							fake.onmessage({'data': data});
 						}
+
 						if (fake.readyState == OPEN){
 							nextPoll();
 						}
@@ -185,7 +197,7 @@
 				// Hard disconnect, inform the user and retry later
 				delay = delayDefault;
 				tn = 0;
-				stream.ondisconnect();
+				if (STATUS) stream.ondisconnect();
 				setTimeout(function(){init();}, delayMax);
 				return false;
 			}
@@ -200,6 +212,7 @@
 
 				if (readyState != OPEN){
 					readyState = OPEN;
+					STATUS = true;
 					stream.onopen();
 				}
 			};
@@ -211,7 +224,10 @@
 				}
 
 				clearInterval(heartbeat);
-
+				if (STATUS){
+					STATUS = false;
+					stream.ondisconnect();
+				}
 				if (readyState == CLOSING){
 					readyState = CLOSED;
 					stream.onclose();
@@ -226,9 +242,8 @@
 						delay = delayMax;
 					}
 
-					isClosed = true;
-
 					setTimeout(function(){
+						STATUS = false;
 						init();
 					}, delay);
 				}
@@ -246,9 +261,6 @@
 		this.onclose = function(){};
 		this.onheartbeat = function(){};
 
-		this.setURL = function(newURL){
-			url = newURL;
-		};
 		this.send = function(data){
 			return transport.send(data);
 		};

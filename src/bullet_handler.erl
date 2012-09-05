@@ -11,8 +11,8 @@
 %% WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
 %% ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
 %% OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
-
 -module(bullet_handler).
+-include("include/bullet.hrl").
 
 -behaviour(cowboy_http_handler).
 -export([init/3, handle/2, info/3, terminate/2]).
@@ -26,105 +26,106 @@
 	handler_state :: term()
 }).
 
--define(TIMEOUT, 60000). %% @todo Configurable.
-
 %% HTTP.
 
-init(Transport, Req, Opts) ->
+init(_Transport, Req, Opts) ->
 	case cowboy_http_req:header('Upgrade', Req) of
-		{undefined, Req2} ->
-			{Method, Req3} = cowboy_http_req:method(Req2),
-			init(Transport, Req3, Opts, Method);
-		{Bin, Req2} when is_binary(Bin) ->
-			case cowboy_bstr:to_lower(Bin) of
+		{undefined, _} ->
+			{Method, Req0} = cowboy_http_req:method(Req),
+			{SSID, Req1} = cowboy_http_req:qs_val(<<"ssid">>, Req0),
+
+			case Method of
+				'GET'	-> init_poll(Req1, Opts, try_decode_pid(SSID));
+				'POST'	-> {ok, Req1, {stream, try_decode_pid(SSID)}}
+			end;
+
+		{Proto, _} when is_binary(Proto) ->
+			case cowboy_bstr:to_lower(Proto) of
 				<<"websocket">> ->
 					{upgrade, protocol, cowboy_http_websocket};
 				_Any ->
-					{ok, Req3} = cowboy_http_req:reply(501, [], [], Req2),
-					{shutdown, Req3, undefined}
+					{ok, Req0} = cowboy_http_req:reply(501, [], [], Req),
+					{shutdown, Req0, undefined}
 			end
 	end.
 
-init(Transport, Req, Opts, 'GET') ->
-	{handler, Handler} = lists:keyfind(handler, 1, Opts),
-	State = #state{handler=Handler},
-	case Handler:init(Transport, Req, Opts, once) of
-		{ok, Req2, HandlerState} ->
-			Req3 = cowboy_http_req:compact(Req2),
-			{loop, Req3, State#state{handler_state=HandlerState},
-				?TIMEOUT, hibernate};
-		{shutdown, Req2, HandlerState} ->
-			{shutdown, Req2, State#state{handler_state=HandlerState}}
-	end;
-init(Transport, Req, Opts, 'POST') ->
-	{handler, Handler} = lists:keyfind(handler, 1, Opts),
-	State = #state{handler=Handler},
-	case Handler:init(Transport, Req, Opts, false) of
-		{ok, Req2, HandlerState} ->
-			{ok, Req2, State#state{handler_state=HandlerState}};
-		{shutdown, Req2, HandlerState} ->
-			{shutdown, Req2, State#state{handler_state=HandlerState}}
-	end;
-init(_Transport, Req, _Opts, _Method) ->
-	{ok, Req2} = cowboy_http_req:reply(405, [], [], Req),
-	{shutdown, Req2, undefined}.
+init_poll(Req, Opts, undefined)	-> {ok, Req, {start_session, Opts}};
+init_poll(Req, _, Pid)			->
+	process_flag(trap_exit, true),
+	erlang:link(Pid),
+	Pid ! {poll, self()},
+	{loop, Req, {poll, Pid}, hibernate}.
+	
+handle(Req, {start_session, Opts}) ->
+	{ok, Pid} = supervisor:start_child(bullet_sup, [Opts]),
+	{ok, Req0} = cowboy_http_req:reply(200, [], encode_pid(Pid), Req),
+	{ok, Req0, pass};
 
-handle(Req, State) ->
-	{Method, Req2} = cowboy_http_req:method(Req),
-	handle(Req2, State, Method).
+handle(Req, {stream, undefined}) ->
+	{ok, Req0} = cowboy_http_req:reply(404, Req),
+	{ok, Req0, undefined};
 
-handle(Req, State=#state{handler=Handler, handler_state=HandlerState},
-		'POST') ->
+handle(Req, {stream, Pid}) ->
 	case cowboy_http_req:body(Req) of
-		{ok, Data, Req2} ->
-			case Handler:stream(Data, Req2, HandlerState) of
-				{ok, Req3, HandlerState2} ->
-					{ok, Req3, State#state{handler_state=HandlerState2}};
-				{reply, Reply, Req3, HandlerState2} ->
-					{ok, Req4} = cowboy_http_req:reply(200, [], Reply, Req3),
-					{ok, Req4, State#state{handler_state=HandlerState2}}
-			end;
-		{error, _} ->
-			%% An error occurred, stop there.
-			{ok, Req, State}
+		{ok, Data, Req0} ->
+			Pid ! {stream, Data},
+			{ok, Req1} = cowboy_http_req:reply(200, Req0),
+			{ok, Req1, undefined};
+
+		{error, _}	->
+			{ok, Req0} = cowboy_http_req:reply(400, Req),
+			{ok, Req0, undefined}
 	end.
 
-info(Message, Req,
-		State=#state{handler=Handler, handler_state=HandlerState}) ->
-	case Handler:info(Message, Req, HandlerState) of
-		{ok, Req2, HandlerState2} ->
-			{loop, Req2, State#state{handler_state=HandlerState2}, hibernate};
-		{reply, Data, Req2, HandlerState2} ->
-			{ok, Req3} = cowboy_http_req:reply(200, [], Data, Req2),
-			{ok, Req3, State#state{handler_state=HandlerState2}}
-	end.
+info({'EXIT', Pid, _}, Req, {poll, Pid}) ->
+	{ok, Req0} = cowboy_http_req:reply(404, Req),
+	{ok, Req0, undefined};
 
-terminate(_Req, undefined) ->
-	ok;
-terminate(Req, #state{handler=Handler, handler_state=HandlerState}) ->
-	Handler:terminate(Req, HandlerState).
+info({reply, Pid, Data}, Req, {poll, Pid}) ->
+	{ok, Req0} = cowboy_http_req:reply(200, [], Data, Req),
+	{ok, Req0, undefined}.
+
+terminate(_, _) -> ok. 
+
+
+%% utils:
+
+try_decode_pid(<<EncKey:?KeyLength/binary, Data/binary>>) ->	
+	Key = crypto:blowfish_ecb_decrypt(?Secret, EncKey),
+	Binary = <<Key/binary, Data/binary>>,
+	try binary_to_term(Binary) of
+		P when is_pid(P)	-> {ok, P};
+		_Other 				-> undefined
+	catch _:_ 				-> undefined
+	end;
+try_decode_pid(_)	-> undefined.
+
+encode_pid(Pid) when is_pid(Pid) ->
+	Binary = term_to_binary(Pid),
+	<<EncKey:?KeyLength/binary, Rest/binary>> = Binary,
+	Key = crypto:blowfish_ecb_encrypt(?Secret, EncKey),
+	<<Key/binary, Rest/binary>>.
 
 %% Websocket.
 
-websocket_init(Transport, Req, Opts) ->
+websocket_init(_Transport, Req, Opts) ->
 	{handler, Handler} = lists:keyfind(handler, 1, Opts),
 	State = #state{handler=Handler},
-	case Handler:init(Transport, Req, Opts, true) of
-		{ok, Req2, HandlerState} ->
-			Req3 = cowboy_http_req:compact(Req2),
-			{ok, Req3, State#state{handler_state=HandlerState},
-				?TIMEOUT, hibernate};
-		{shutdown, Req2, _HandlerState} ->
-			{shutdown, Req2}
+	case Handler:init(Opts) of
+		{ok, HandlerState} ->
+			Req0 = cowboy_http_req:compact(Req),
+			{ok, Req0, State#state{handler_state=HandlerState}, hibernate};
+		{shutdown, _HandlerState} ->
+			{shutdown, Req}
 	end.
 
 websocket_handle({text, Data}, Req,
 		State=#state{handler=Handler, handler_state=HandlerState}) ->
-	case Handler:stream(Data, Req, HandlerState) of
-		{ok, Req2, HandlerState2} ->
-			{ok, Req2, State#state{handler_state=HandlerState2}, hibernate};
-		{reply, Reply, Req2, HandlerState2} ->
-			{reply, {text, Reply}, Req2,
+	case Handler:stream(Data, HandlerState) of
+		{ok, HandlerState2} ->
+			{ok, Req, State#state{handler_state=HandlerState2}, hibernate};
+		{reply, Reply, HandlerState2} ->
+			{reply, {text, Reply}, Req,
 				State#state{handler_state=HandlerState2}, hibernate}
 	end;
 websocket_handle(_Frame, Req, State) ->
@@ -132,14 +133,14 @@ websocket_handle(_Frame, Req, State) ->
 
 websocket_info(Info, Req, State=#state{
 		handler=Handler, handler_state=HandlerState}) ->
-	case Handler:info(Info, Req, HandlerState) of
-		{ok, Req2, HandlerState2} ->
-			{ok, Req2, State#state{handler_state=HandlerState2}, hibernate};
-		{reply, Reply, Req2, HandlerState2} ->
-			{reply, {text, Reply}, Req2,
+	case Handler:info(Info, HandlerState) of
+		{ok, HandlerState2} ->
+			{ok, Req, State#state{handler_state=HandlerState2}, hibernate};
+		{reply, Reply, HandlerState2} ->
+			{reply, {text, Reply}, Req,
 				State#state{handler_state=HandlerState2}, hibernate}
 	end.
 
-websocket_terminate(_Reason, Req,
+websocket_terminate(_Reason, _Req,
 		#state{handler=Handler, handler_state=HandlerState}) ->
-	Handler:terminate(Req, HandlerState).
+	Handler:terminate(HandlerState).

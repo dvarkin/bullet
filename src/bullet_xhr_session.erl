@@ -1,137 +1,124 @@
-%%%-------------------------------------------------------------------
-%%% @author dem <dvarkin@gmail.com>
-%%% @copyright (C) 2012, dem
-%%% @doc
-%%%
-%%% @end
-%%% Created : 23 Jun 2012 by dem <dvarkin@gmail.com>
-%%%-------------------------------------------------------------------
 -module(bullet_xhr_session).
-
--include("include/bullet.hrl").
+-export([start_link/1]).
 
 -behaviour(gen_server).
-
--export([behaviour_info/1]).
-
-%% API
-
--export([start/3, req/2, send/2]).
-
-%% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
 		 terminate/2, code_change/3]).
 
--define(SERVER, ?MODULE). 
+-record(state, {
+	handler ::module(),
+	handler_state ::term(),
+	timer ::reference(),
+	buffer ::binary(),
+	poll ::pid()
+}).
 
--record(state, {module :: atom(),
-				mstate :: term(),
-				mqueue = [],
-				mpid :: pid(),
-				keep_alive :: pid()
-			   }
-	   ).
+-define(term, 10).
+-define(slash, 92).
 
-behaviour_info(callbacks) ->
-    [{init, 1}, {stream, 2}, {info, 2}, {terminate, 1}];
-behaviour_info(_) ->
-    undefined.
+start_link(Opts) ->
+	gen_server:start_link(?MODULE, [Opts], []).
 
-%%%===================================================================
-%%% API
-%%%===================================================================
+init([Opts]) ->
+	Handler = proplists:get_value(handler, Opts),
+	erlang:put(poll_wait_timeout, proplists:get_value(poll_wait_timeout, Opts, 1000)),
+	erlang:put(poll_timeout, proplists:get_value(poll_timeout, Opts, 60000)),
 
-start(Module, MPid, Opts) ->
-	gen_server:start(?SERVER, [Module, MPid, Opts], []).
+	case Handler:init(Opts) of
+		{ok, HandlerState} ->
+			process_flag(trap_exit, true),
+			{ok, reset_timer(#state{ 
+				handler=Handler, handler_state=HandlerState, buffer = <<>>}, poll_wait)};
 
-req(Pid, Args) ->
-	gen_server:call(Pid, {req, Args}).
+		{shutdown, _HandlerState} -> {stop, normal}
+	end.
 
-send(Pid, Msg) ->
-	gen_server:cast(Pid, {send, Msg}).
+%% poll wait timeout - close session
+handle_info({timeout, Ref, poll_wait}, #state{ timer=Ref } = S) -> {stop, normal, S};
 
-
-init([Module, Pid, Opts]) ->
-	case Module:init(Opts) of
-		 {ok, MState} ->
-			TRef = start_keep_alive(),
-			State = #state{module = Module, mstate = MState, mqueue = [], mpid = Pid, keep_alive = TRef},
-			{ok, State};
-		Any ->
-			?ERR(Any),
-			{stop, Any}
-	end;
-init(Any) -> {stop, Any}.
-
-
-handle_call({req, Args}, {_From,_}, #state{module = Module, mstate =  MState} = State) ->
-	{Reply, NewState} = Module:stream(Args, MState),
-	{reply, Reply, State#state{mstate = NewState}};
-handle_call(_Request, _From, State) ->
-	?ERR([_Request, State]),
-	Reply = ok,
-	{reply, Reply, State}.
-
-handle_cast({send, Msg}, #state{mpid = Pid} = State) ->
-	send_message(Pid, Msg),
+%% same Pid requests poll again - just ignore it
+handle_info({poll, Pid}, #state{ poll=Pid } = State) ->
 	{noreply, State};
-handle_cast(_Msg, State) ->
-	?ERR(_Msg),
-	{noreply, State}.
 
-handle_info(alive, #state{mpid = Pid } = State) ->
-	YesFun = fun() -> {noreply, State} end,
-	NoFun = fun() ->  {stop, normal, State} end, %%%% STOP SIGNAL!!!
-	bullet_tools:exec_if_alive(Pid, YesFun, NoFun);
+%% new poll request
+handle_info({poll, Pid}, #state{ poll=undefined } = State) ->
+	case State#state.buffer of
+		<<>>	->
+			erlang:link(Pid),
+			{noreply, reset_timer(State#state{ poll=Pid }, poll)};
 
-%% if not POST
-handle_info({init, Pid, _Opts}, #state{mqueue = []} = State) ->
-	{noreply, State#state{mpid = Pid}};
+		_Data	->
+			handle_poll_reply(State#state{ poll=Pid })
+	end;
 
-handle_info({init, Pid, _Opts}, #state{mqueue = [_ | _] } = State) ->
+%% new poll request when previous still hanging
+handle_info({poll, Pid}, State) ->
+	{noreply, State0} = handle_poll_reply(State),
+	handle_info({poll, Pid}, State0);
 
-	%%%% SEND MESSAGE FROM QUEUE
-	Json = bulltet_tools:split(State#state.mqueue), %% UNREAL FUNCTION
-	send_message(Pid, Json),
-	{noreply, State#state{mpid = Pid, mqueue = []}};
-handle_info({store_message, Msg}, #state{mqueue = Queue} = State) ->
-%	?DBG("store message ~p", [Msg]),
-	{noreply, State#state{mqueue = [Msg |  Queue]}};
-handle_info(skip_keep_alive, #state{keep_alive = Ref} = State) ->
-	timer:cancel(Ref),
-	{ok, KL} = start_keep_alive(),
-	{noreply, State#state{keep_alive = KL}};
-handle_info(keep_alive, #state{mpid = Pid, keep_alive = Ref} = State) ->
-	Msg = keep_alive_msg(),
-	send_message(Pid, Msg),
-	timer:cancel(Ref),
-	TRef = start_keep_alive(),
-	{noreply, State#state{keep_alive = TRef}};
-handle_info(Msg, #state{module = Module, mstate = MState} = State) ->
-	{noreply, State#state{mstate = Module:info(Msg, MState)}}.
+%% polling process failed
+handle_info({'EXIT', Pid, _}, #state{ poll=Pid } = State) ->
+	{noreply, reset_timer(State#state{ poll=undefined }, poll_wait)};
 
-terminate(_Reason, #state{module = Module, mstate = MState}) ->
-	Module:terminate(MState),
-	ok.
+%% poll timeout exceeded
+handle_info({timeout, Ref, poll}, #state{ timer=Ref } = State) ->
+	handle_poll_reply(State);
 
-code_change(_OldVsn, State, _Extra) ->
-	{ok, State}.
+%% non-matched timeouts and exits
+handle_info({timeout, _, poll_wait}, State) -> {noreply, State};
+handle_info({timeout, _, poll}, State) -> {noreply, State};
+handle_info({'EXIT', _, _}, State) -> {noreply, State};
 
-%%%===================================================================
-%%% Internal functions
-%%%===================================================================
+%% stream received
+handle_info({stream, Data}, State) ->
+	handle_module(stream, Data, State);
 
-%%send_message(Pid, Message) -> Pid ! {send, Message}.
-send_message(Pid, Message) ->
-	YesFun = fun() -> self() ! skip_keep_alive,
-					  Pid ! {send, Message} end,
-	NoFun  = fun() -> ok  end,
-	bullet_tools:exec_if_alive(Pid, YesFun, NoFun).
+%% pass other Info to module
+handle_info(Info, State) ->
+	handle_module(info, Info, State).
 
-keep_alive_msg() ->
-	T = calendar:datetime_to_gregorian_seconds(erlang:localtime()),
-	bullet_tools:json_encode([{ts, T}]).
-	
-start_keep_alive() ->
-	KeepAliveInterval = bullet:envdef(keep_alive_interval, 10000),
-	timer:send_after(KeepAliveInterval, keep_alive).
+%% handle client module result
+handle_module(Fun, Arg, #state{ handler=Handler, poll=Pid, buffer=Buffer } = State) ->
+	case erlang:apply(Handler, Fun, [Arg, State#state.handler_state]) of
+		{ok, HandlerState0}				-> {noreply, State#state{ handler_state=HandlerState0 }};
+		{reply, Reply, HandlerState0} 	->
+			Reply0 = escape(iolist_to_binary(Reply)),
+			case Pid of
+				undefined -> 
+					%% no poll - accumulate reply in buffer
+					Buffer0 = <<Buffer/binary, ?term, Reply0/binary>>,
+					{noreply, State#state{ handler_state=HandlerState0, buffer=Buffer0 }};
+
+				_Pid -> handle_poll_reply(State#state{ handler_state=HandlerState0, buffer=Reply0 })
+			end
+	end.
+
+%% send poll reply
+handle_poll_reply(#state{ poll=Pid, buffer=Data } = State) ->
+	erlang:unlink(Pid),
+	Pid ! {reply, self(), Data},
+	{noreply, reset_timer(State#state{ poll=undefined, buffer = <<>> }, poll_wait)}.
+
+%% unused:
+handle_call(_Req, _From, State) -> {noreply, State}.
+handle_cast(_Req, State) -> {noreply, State}.
+
+code_change(_OldVsn, State, _Extra) -> {ok, State}.
+terminate(_, #state{ handler=Handler, handler_state=HandlerState }) ->
+	Handler:terminate(HandlerState).
+
+%% utilities:
+escape(<<?term, R/binary>>) 	-> R0 = escape(R), <<?slash, $n, R0/binary>>;
+escape(<<?slash, R/binary>>) 	-> R0 = escape(R), <<?slash, ?slash, R0/binary>>;
+escape(<<C, R/binary>>)		-> R0 = escape(R), <<C, R0/binary>>;
+escape(<<>>) -> <<>>.
+
+reset_timer(#state{ timer=undefined } = S, poll_wait) -> S#state{ timer=erlang:start_timer(erlang:get(poll_wait_timeout), self(), poll_wait) };
+reset_timer(#state{ timer=undefined } = S, poll) 	-> S#state{ timer=erlang:start_timer(erlang:get(poll_timeout), self(), poll) };
+reset_timer(#state{ timer=undefined } = S, _) -> S;
+
+reset_timer(#state{ timer=TimerRef } = S, M) ->
+	erlang:cancel_timer(TimerRef),
+	reset_timer(S#state{ timer=undefined }, M).	
+
+
