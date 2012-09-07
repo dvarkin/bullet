@@ -87,12 +87,7 @@
 						dataType: 'text',
 						contentType:
 							'application/x-www-form-urlencoded; charset=utf-8',
-						headers: {'X-Socket-Transport': 'xhrPolling'},
-						success: function(data){
-							if (data.length != 0){
-								fake.onmessage({'data': data});
-							}
-						}
+						headers: {'X-Socket-Transport': 'xhrPolling'}
 					});
 
 					return true;
@@ -254,9 +249,6 @@
 		this.onclose = function(){};
 		this.onheartbeat = function(){};
 
-		this.setURL = function(newURL){
-			url = newURL;
-		};
 		this.send = function(data){
 			return transport.send(data);
 		};
