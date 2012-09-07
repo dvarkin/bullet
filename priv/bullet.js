@@ -104,6 +104,14 @@
 				onclose: function(){}
 			};
 
+			function decode(data, onframe) {
+				var frames = data.split('\n');
+				for (i = 0; i < frames.length; i++) {
+					var framedata = frames[i].replace('\\n', '\n').replace('\\\\', '\\');
+					if (framedata.length > 0) { onframe(framedata); }
+				}
+			};
+
 			function poll(){
 				var fakeurl = url.replace('ws:', 'http:').replace('wss:', 'https:');
 				if (fake.ssid) fakeurl += '?ssid='+ encodeURIComponent(fake.ssid);
@@ -121,10 +129,11 @@
 							fake.ssid = data;
 							fake.onopen(fake);
 						}
-						// Connection might have closed without a response body
-						else if (data.length != 0){
-							fake.onmessage({'data': data});
-						}
+						// Decode received packet and trigger onmessage for each frame
+						else decode(data, function (frame) {
+							fake.onmessage({'data': frame})
+						});
+
 						if (fake.readyState == OPEN){
 							nextPoll();
 						}
