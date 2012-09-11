@@ -139,7 +139,10 @@
 						}
 					},
 					error: function(xhr){
-						fake.onerror();
+						// don't trigger onerror if transport have been already closed
+						if (fake.readyState != CLOSED) {
+							fake.onerror();
+						}
 					}
 				});
 			}
