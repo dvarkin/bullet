@@ -22,4 +22,7 @@
 start() ->
 	ok = application:start(cowboy),
 	ok = application:start(bullet),
-	ok = application:start(clock).
+	ok = application:start(clock),
+
+	{ok, Port} = application:get_env(clock, port),
+	io:format("Point your browser at http://localhost:~p~n", [Port]).

@@ -11,6 +11,10 @@
 %% API.
 
 start(_Type, _Args) ->
+	Port = case application:get_env(clock, port) of
+		undefined	-> application:set_env(clock, port, 8000), 8000;
+		{ok, V}		-> V
+	end,
 	Dispatch = [
 		{'_', [
 			{[], toppage_handler, []},
@@ -24,7 +28,7 @@ start(_Type, _Args) ->
 		]}
 	],
 	{ok, _} = cowboy:start_listener(http, 100,
-		cowboy_tcp_transport, [{port, 8080}],
+		cowboy_tcp_transport, [{port, Port}],
 		cowboy_http_protocol, [{dispatch, Dispatch}]
 	),
 	clock_sup:start_link().

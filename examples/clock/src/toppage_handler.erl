@@ -30,7 +30,8 @@ handle(Req, State) ->
 	<script type=\"text/javascript\">
 // <![CDATA[
 $(document).ready(function(){
-	var bullet = $.bullet('ws://localhost:8080/bullet');
+	var url = 'ws://' + location.host + '/bullet';
+	var bullet = $.bullet(url);
 	bullet.onopen = function(){
 		$('#status').text('online');
 	};
