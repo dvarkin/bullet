@@ -76,7 +76,7 @@
 					}
 
 					var fakeurl = url.replace('ws:', 'http:').replace('wss:', 'https:');
-					if (this.ssid) fakeurl += '?ssid='+ encodeURIComponent(this.ssid);
+					if (this.ssid) fakeurl += '?s='+ encodeURIComponent(this.ssid);
 
 					$.ajax({
 						async: false,
@@ -114,7 +114,7 @@
 
 			function poll(){
 				var fakeurl = url.replace('ws:', 'http:').replace('wss:', 'https:');
-				if (fake.ssid) fakeurl += '?ssid='+ encodeURIComponent(fake.ssid);
+				if (fake.ssid) fakeurl += '?s='+ encodeURIComponent(fake.ssid);
 
 				xhr = $.ajax({
 					type: 'GET',

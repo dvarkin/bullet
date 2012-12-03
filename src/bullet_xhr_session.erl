@@ -1,5 +1,5 @@
 -module(bullet_xhr_session).
--export([start_link/1]).
+-export([start_link/2]).
 
 -behaviour(gen_server).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
@@ -8,6 +8,7 @@
 -record(state, {
 	handler ::module(),
 	handler_state ::term(),
+	key ::binary(),
 	timer ::reference(),
 	buffer ::binary(),
 	poll ::pid()
@@ -16,10 +17,10 @@
 -define(term, 10).
 -define(slash, 92).
 
-start_link(Opts) ->
-	gen_server:start_link(?MODULE, [Opts], []).
+start_link(Key, Opts) ->
+	gen_server:start_link(?MODULE, {Key, Opts}, []).
 
-init([Opts]) ->
+init({Key, Opts}) ->
 	Handler = proplists:get_value(handler, Opts),
 	erlang:put(poll_wait_timeout, proplists:get_value(poll_wait_timeout, Opts, 1000)),
 	erlang:put(poll_timeout, proplists:get_value(poll_timeout, Opts, 60000)),
@@ -28,7 +29,7 @@ init([Opts]) ->
 		{ok, HandlerState} ->
 			process_flag(trap_exit, true),
 			{ok, reset_timer(#state{ 
-				handler=Handler, handler_state=HandlerState, buffer = <<>>}, poll_wait)};
+				handler=Handler, handler_state=HandlerState, key = Key, buffer = <<>>}, poll_wait)};
 
 		{shutdown, _HandlerState} -> {stop, normal}
 	end.
@@ -36,12 +37,16 @@ init([Opts]) ->
 %% poll wait timeout - close session
 handle_info({timeout, Ref, poll_wait}, #state{ timer=Ref } = S) -> {stop, normal, S};
 
+%% poll request with non-matched key
+handle_info({poll, K, Pid}, #state{ key = Key } = State)
+	when K /= Key -> Pid ! {wrong_key, self(), K}, {noreply, State};
+
 %% same Pid requests poll again - just ignore it
-handle_info({poll, Pid}, #state{ poll=Pid } = State) ->
+handle_info({poll, _, Pid}, #state{ poll=Pid } = State) ->
 	{noreply, State};
 
 %% new poll request
-handle_info({poll, Pid}, #state{ poll=undefined } = State) ->
+handle_info({poll, _, Pid}, #state{ poll=undefined } = State) ->
 	case State#state.buffer of
 		<<>>	->
 			erlang:link(Pid),
@@ -52,9 +57,9 @@ handle_info({poll, Pid}, #state{ poll=undefined } = State) ->
 	end;
 
 %% new poll request when previous still hanging
-handle_info({poll, Pid}, State) ->
+handle_info({poll, K, Pid}, State) ->
 	{noreply, State0} = handle_poll_reply(State),
-	handle_info({poll, Pid}, State0);
+	handle_info({poll, K, Pid}, State0);
 
 %% polling process failed
 handle_info({'EXIT', Pid, _}, #state{ poll=Pid } = State) ->
@@ -70,8 +75,11 @@ handle_info({timeout, _, poll}, State) -> {noreply, State};
 handle_info({'EXIT', _, _}, State) -> {noreply, State};
 
 %% stream received
-handle_info({stream, Data}, State) ->
-	handle_module(stream, Data, State);
+handle_info({stream, K, Data}, State) ->
+	case State#state.key of	%% match key
+		K	-> handle_module(stream, Data, State);
+		_	-> {noreply, State} 
+	end;
 
 %% pass other Info to module
 handle_info(Info, State) ->

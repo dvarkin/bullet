@@ -32,11 +32,11 @@ init(_Transport, Req, Opts) ->
 	case cowboy_http_req:header('Upgrade', Req) of
 		{undefined, _} ->
 			{Method, Req0} = cowboy_http_req:method(Req),
-			{SSID, Req1} = cowboy_http_req:qs_val(<<"ssid">>, Req0),
+			{S, Req1} = cowboy_http_req:qs_val(<<"s">>, Req0),
 
 			case Method of
-				'GET'	-> init_poll(Req1, Opts, try_decode_pid(SSID));
-				'POST'	-> {ok, Req1, {stream, try_decode_pid(SSID)}}
+				'GET'	-> init_poll(Req1, Opts, try_decode_pid(S));
+				'POST'	-> {ok, Req1, {stream, try_decode_pid(S)}}
 			end;
 
 		{Proto, _} when is_binary(Proto) ->
@@ -50,25 +50,26 @@ init(_Transport, Req, Opts) ->
 	end.
 
 init_poll(Req, Opts, undefined)	-> {ok, Req, {start_session, Opts}};
-init_poll(Req, _, Pid)			->
+init_poll(Req, _, {K, Pid})		->
 	process_flag(trap_exit, true),
 	erlang:link(Pid),
-	Pid ! {poll, self()},
+	Pid ! {poll, K, self()},
 	{loop, Req, {poll, Pid}, hibernate}.
 	
 handle(Req, {start_session, Opts}) ->
-	{ok, Pid} = supervisor:start_child(bullet_sup, [Opts]),
-	{ok, Req0} = cowboy_http_req:reply(200, [], encode_pid(Pid), Req),
+	Key = generate_key(),
+	{ok, Pid} = supervisor:start_child(bullet_sup, [Key, Opts]),
+	{ok, Req0} = cowboy_http_req:reply(200, [], encode_pid(Key, Pid), Req),
 	{ok, Req0, pass};
 
 handle(Req, {stream, undefined}) ->
 	{ok, Req0} = cowboy_http_req:reply(404, Req),
 	{ok, Req0, undefined};
 
-handle(Req, {stream, Pid}) ->
+handle(Req, {stream, {K, Pid}}) ->
 	case cowboy_http_req:body(Req) of
 		{ok, Data, Req0} ->
-			Pid ! {stream, Data},
+			Pid ! {stream, K, Data},
 			{ok, Req1} = cowboy_http_req:reply(200, Req0),
 			{ok, Req1, undefined};
 
@@ -81,6 +82,11 @@ info({'EXIT', Pid, _}, Req, {poll, Pid}) ->
 	{ok, Req0} = cowboy_http_req:reply(404, Req),
 	{ok, Req0, undefined};
 
+info({wrong_key, Pid, _}, Req, {poll, Pid}) ->
+	erlang:unlink(Pid),
+	{ok, Req0} = cowboy_http_req:reply(403, Req),
+	{ok, Req0, undefined};
+
 info({reply, Pid, Data}, Req, {poll, Pid}) ->
 	{ok, Req0} = cowboy_http_req:reply(200, [], Data, Req),
 	{ok, Req0, undefined}.
@@ -89,13 +95,14 @@ terminate(_, _) -> ok.
 
 %% utils
 
-try_decode_pid(SSID) when is_binary(SSID) ->
-	case base64:decode(replace_char(SSID, $-, $/)) of
-		<<EncKey:?KeyLength/binary, Data/binary>> ->
-			Key = crypto:blowfish_ecb_decrypt(?Secret, EncKey),
-			Binary = <<Key/binary, Data/binary>>,
-			try binary_to_term(Binary) of
-				P when is_pid(P)	-> P;
+-define(keylen, 8).
+generate_key() -> crypto:strong_rand_bytes(?keylen).
+
+try_decode_pid(S) when is_binary(S) ->
+	case base64:decode(S) of
+		<<K:?keylen/binary, PidBinary/binary>> ->
+			try binary_to_term(PidBinary) of
+				P when is_pid(P)	-> {K, P};
 				_Other 				-> undefined
 			catch _:_ 				-> undefined
 			end;
@@ -103,15 +110,9 @@ try_decode_pid(SSID) when is_binary(SSID) ->
 	end;
 try_decode_pid(_)	-> undefined.
 
-encode_pid(Pid) when is_pid(Pid) ->
-	Binary = term_to_binary(Pid),
-	<<EncKey:?KeyLength/binary, Rest/binary>> = Binary,
-	Key = crypto:blowfish_ecb_encrypt(?Secret, EncKey),
-	replace_char(base64:encode(<<Key/binary, Rest/binary>>), $/, $-).
-
-replace_char(<<P, Rest/binary>>, P, C) -> R = replace_char(Rest, P, C), <<C, R/binary>>;
-replace_char(<<X, Rest/binary>>, P, C) -> R = replace_char(Rest, P, C), <<X, R/binary>>;
-replace_char(<<>>, _, _) -> <<>>.
+encode_pid(Key, Pid) when is_pid(Pid) and is_binary(Key) ->
+	PidBinary = term_to_binary(Pid),
+	base64:encode(<<Key/binary, PidBinary/binary>>).
 
 %% Websocket.
 
