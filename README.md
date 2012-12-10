@@ -15,6 +15,19 @@ provides an optional heartbeat which is managed on the client side.
 
 Today Bullet only supports websocket and long-polling transports.
 
+This is a fork of [original Bullet](https://github.com/extend/bullet) project. 
+The major goal of forking is to implement server-side session process for long-polling transport. 
+This allows server-side handler for long-polling transport to share the same persistent connection semantics with 
+websocket transport. This project doesn't provide backward compatibility with the original Bullet. 
+
+Starting Bullet
+---------------
+
+Bullet is an ordinary OTP application, so it have to be started before usage as follows:
+``` erlang
+application:start(bullet)
+```
+
 Dispatch options
 ----------------
 
@@ -41,22 +54,27 @@ A very simple bullet handler would look like the following:
 
 ``` erlang
 -module(stream_handler).
--export([init/4, stream/3, info/3, terminate/2]).
+-export([init/1, stream/2, info/2, terminate/1]).
 
-init(_Transport, Req, _Opts, _Active) ->
-	{ok, Req, undefined_state}.
+init(_Opts) ->
+	{ok, undefined_state}.
 
-stream(Data, Req, State) ->
-	{reply, Data, Req, State}.
+stream(Data, State) ->
+	{reply, Data, State}.
 
-info(_Info, Req, State) ->
-	{ok, Req, State}.
+info(_Info, State) ->
+	{ok, State}.
 
 terminate(_Req, _State) ->
 	ok.
 ```
+The handler provides an abstraction of persistent connection between client and server with the ability
+to transmit data in both directions. All server-side processing is done in a separate erlang process 
+(websocket handler process for websocket transport and special session process for long-polling).
+Bullet processes should be considered temporary as you never know when a connection is going to close
+and therefore lose your State.
 
-Of note is that the init/4 and terminate/2 functions are called
+Of note is that the init/1 and terminate/1 functions are called
 everytime a connection is made or closed, respectively, which can
 happen many times over the course of a bullet connection's life,
 as Bullet will reconnect everytime it detects a disconnection.
@@ -64,25 +82,6 @@ as Bullet will reconnect everytime it detects a disconnection.
 Note that you do not need to handle a heartbeat server-side, it
 is automatically done when needed by the Bullet client as explained
 later in this document.
-
-You might have noticed the odd Active argument to init/4. It
-indicates what type of connection we have. When Active == once,
-we have a temporary connection that only allows one reply before
-terminating. When Active == true, the connection allows any number
-of replies. You can use this information to inform your session
-process that it should send only 1 message, in the case of
-Active == once, or that it can send messages whenever in the
-case of Active == true.
-
-You would typically use init/4 to inform your session process
-that it can send you messages. In the same manner you can use
-terminate/2 to inform it that the connection is going down.
-
-Bullet handlers should only contain transport related code,
-logic should be done in your session process if any, or other
-parts of your application. Bullet processes should be considered
-temporary as you never know when a connection is going to close
-and therefore lose your State.
 
 Client-side javascript
 ----------------------
