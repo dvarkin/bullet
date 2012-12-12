@@ -71,7 +71,7 @@
 				readyState: CONNECTING,
 				ssid: false,
 				send: function(data){
-					if (this.readyState != CONNECTING && this.readyState != OPEN){
+					if (this.readyState != OPEN){
 						return false;
 					}
 
