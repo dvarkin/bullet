@@ -32,7 +32,7 @@
 	onheartbeat is called once every few seconds to allow you to easily setup
 	a ping/pong mechanism.
 */
-(function($){$.extend({bullet: function(url){
+(function($){$.extend({bullet: function (url, active) {
 	var CONNECTING = 0;
 	var OPEN = 1;
 	var CLOSING = 2;
@@ -158,6 +158,13 @@
 	};
 
 	var tn = 0;
+	if (typeof active == 'object') {
+		for (var f in active) { 
+			if (active[f]) { active[f] = transports[f]; } else { delete active[f]; };
+		};
+		transports = active;
+	};
+
 	function next(){
 		var c = 0;
 
