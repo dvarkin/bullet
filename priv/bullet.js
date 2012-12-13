@@ -124,7 +124,11 @@
 					data: {},
 					headers: {'X-Socket-Transport': 'xhrPolling'},
 					success: function(data){
-						if (fake.readyState == CONNECTING){
+						if ((fake.readyState == OPEN) || (fake.readyState == CONNECTING)){
+							nextPoll();
+						};
+
+						if (fake.readyState == CONNECTING) {
 							fake.readyState = OPEN;
 							fake.ssid = data;
 							fake.onopen(fake);
@@ -133,10 +137,6 @@
 						else decode(data, function (frame) {
 							fake.onmessage({'data': frame})
 						});
-
-						if (fake.readyState == OPEN){
-							nextPoll();
-						}
 					},
 					error: function(xhr){
 						// don't trigger onerror if transport have been already closed
