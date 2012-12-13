@@ -151,8 +151,7 @@
 				timeout = setTimeout(function(){poll();}, 100);
 			}
 
-			nextPoll();
-
+			poll();
 			return {'heart': false, 'transport': function(){ return fake; }};
 		}
 	};
