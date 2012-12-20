@@ -50,10 +50,9 @@ init(_Transport, Req, Opts) ->
 
 init_poll(Req, Opts, undefined)	-> {ok, Req, {start_session, Opts}};
 init_poll(Req, _, {K, Pid})		->
-	process_flag(trap_exit, true),
-	erlang:link(Pid),
+	Mon = erlang:monitor(process, Pid),
 	Pid ! {poll, K, self()},
-	{loop, Req, {poll, Pid}, hibernate}.
+	{loop, Req, {poll, Pid, Mon}, hibernate}.
 	
 handle(Req, {start_session, Opts}) ->
 	Key = generate_key(),
@@ -77,16 +76,17 @@ handle(Req, {stream, {K, Pid}}) ->
 			{ok, Req0, undefined}
 	end.
 
-info({'EXIT', Pid, _}, Req, {poll, Pid}) ->
+info({'DOWN', Mon, _, _, _}, Req, {poll, _, Mon}) ->
 	{ok, Req0} = cowboy_http_req:reply(404, Req),
 	{ok, Req0, undefined};
 
-info({wrong_key, Pid, _}, Req, {poll, Pid}) ->
-	erlang:unlink(Pid),
+info({wrong_key, Pid, _}, Req, {poll, Pid, Mon}) ->
+	erlang:demonitor(Mon),
 	{ok, Req0} = cowboy_http_req:reply(403, Req),
 	{ok, Req0, undefined};
 
-info({reply, Pid, Data}, Req, {poll, Pid}) ->
+info({reply, Pid, Data}, Req, {poll, Pid, Mon}) ->
+	erlang:demonitor(Mon),
 	{ok, Req0} = cowboy_http_req:reply(200, [], Data, Req),
 	{ok, Req0, undefined}.
 

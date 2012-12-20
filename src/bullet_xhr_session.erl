@@ -27,7 +27,6 @@ init({Key, Opts}) ->
 
 	case Handler:init(Opts) of
 		{ok, HandlerState} ->
-			process_flag(trap_exit, true),
 			{ok, reset_timer(#state{ 
 				handler=Handler, handler_state=HandlerState, key = Key, buffer = <<>>}, poll_wait)};
 
@@ -48,12 +47,8 @@ handle_info({poll, _, Pid}, #state{ poll=Pid } = State) ->
 %% new poll request
 handle_info({poll, _, Pid}, #state{ poll=undefined } = State) ->
 	case State#state.buffer of
-		<<>>	->
-			erlang:link(Pid),
-			{noreply, reset_timer(State#state{ poll=Pid }, poll)};
-
-		_Data	->
-			handle_poll_reply(State#state{ poll=Pid })
+		<<>>	-> {noreply, reset_timer(State#state{ poll=Pid }, poll)};
+		_Data	-> handle_poll_reply(State#state{ poll=Pid })
 	end;
 
 %% new poll request when previous still hanging
@@ -61,18 +56,13 @@ handle_info({poll, K, Pid}, State) ->
 	{noreply, State0} = handle_poll_reply(State),
 	handle_info({poll, K, Pid}, State0);
 
-%% polling process failed
-handle_info({'EXIT', Pid, _}, #state{ poll=Pid } = State) ->
-	{noreply, reset_timer(State#state{ poll=undefined }, poll_wait)};
-
 %% poll timeout exceeded
 handle_info({timeout, Ref, poll}, #state{ timer=Ref } = State) ->
 	handle_poll_reply(State);
 
-%% non-matched timeouts and exits
+%% non-matched timeouts
 handle_info({timeout, _, poll_wait}, State) -> {noreply, State};
 handle_info({timeout, _, poll}, State) -> {noreply, State};
-handle_info({'EXIT', _, _}, State) -> {noreply, State};
 
 %% stream received
 handle_info({stream, K, Data}, State) ->
@@ -103,7 +93,6 @@ handle_module(Fun, Arg, #state{ handler=Handler, poll=Pid, buffer=Buffer } = Sta
 
 %% send poll reply
 handle_poll_reply(#state{ poll=Pid, buffer=Data } = State) ->
-	erlang:unlink(Pid),
 	Pid ! {reply, self(), Data},
 	{noreply, reset_timer(State#state{ poll=undefined, buffer = <<>> }, poll_wait)}.
 
