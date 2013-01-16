@@ -98,7 +98,7 @@ terminate(_, _) -> ok.
 generate_key() -> crypto:strong_rand_bytes(?keylen).
 
 try_decode_pid(S) when is_binary(S) ->
-	case base64:decode(S) of
+	case base64:decode(cowboy_http:urldecode(S)) of
 		<<K:?keylen/binary, PidBinary/binary>> ->
 			try binary_to_term(PidBinary) of
 				P when is_pid(P)	-> {K, P};
@@ -111,7 +111,7 @@ try_decode_pid(_)	-> undefined.
 
 encode_pid(Key, Pid) when is_pid(Pid) and is_binary(Key) ->
 	PidBinary = term_to_binary(Pid),
-	base64:encode(<<Key/binary, PidBinary/binary>>).
+	cowboy_http:urlencode(base64:encode(<<Key/binary, PidBinary/binary>>)).
 
 %% Websocket.
 
