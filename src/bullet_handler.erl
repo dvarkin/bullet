@@ -56,8 +56,11 @@ init_poll(Req, _, {K, Pid})		->
 	
 handle(Req, {start_session, Opts}) ->
 	Key = generate_key(),
-	{ok, Pid} = supervisor:start_child(bullet_sup, [Key, Opts]),
-	{ok, Req0} = cowboy_http_req:reply(200, [], encode_pid(Key, Pid), Req),
+	{ok, Req0} = 
+	case supervisor:start_child(bullet_sup, [Key, Opts]) of
+		{ok, Pid}		-> cowboy_http_req:reply(200, [], encode_pid(Key, Pid), Req);
+		{error, normal}	-> cowboy_http_req:reply(400, Req)
+	end,
 	{ok, Req0, pass};
 
 handle(Req, {stream, undefined}) ->
@@ -122,7 +125,7 @@ websocket_init(_Transport, Req, Opts) ->
 		{ok, HandlerState} ->
 			Req0 = cowboy_http_req:compact(Req),
 			{ok, Req0, State#state{handler_state=HandlerState}, hibernate};
-		{shutdown, _HandlerState} ->
+		shutdown ->
 			{shutdown, Req}
 	end.
 
@@ -131,6 +134,8 @@ websocket_handle({text, Data}, Req,
 	case Handler:stream(Data, HandlerState) of
 		{ok, HandlerState2} ->
 			{ok, Req, State#state{handler_state=HandlerState2}, hibernate};
+		{shutdown, HandlerState2} ->
+			{shutdown, Req, State#state{handler_state=HandlerState2}};
 		{reply, Reply, HandlerState2} ->
 			{reply, {text, Reply}, Req,
 				State#state{handler_state=HandlerState2}, hibernate}
@@ -143,6 +148,8 @@ websocket_info(Info, Req, State=#state{
 	case Handler:info(Info, HandlerState) of
 		{ok, HandlerState2} ->
 			{ok, Req, State#state{handler_state=HandlerState2}, hibernate};
+		{shutdown, HandlerState2} ->
+			{shutdown, Req, State#state{handler_state=HandlerState2}};
 		{reply, Reply, HandlerState2} ->
 			{reply, {text, Reply}, Req,
 				State#state{handler_state=HandlerState2}, hibernate}

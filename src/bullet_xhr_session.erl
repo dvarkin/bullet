@@ -30,7 +30,7 @@ init({Key, Opts}) ->
 			{ok, reset_timer(#state{ 
 				handler=Handler, handler_state=HandlerState, key = Key, buffer = <<>>}, poll_wait)};
 
-		{shutdown, _HandlerState} -> {stop, normal}
+		shutdown -> {stop, normal}
 	end.
 
 %% poll wait timeout - close session
@@ -79,6 +79,7 @@ handle_info(Info, State) ->
 handle_module(Fun, Arg, #state{ handler=Handler, poll=Pid, buffer=Buffer } = State) ->
 	case erlang:apply(Handler, Fun, [Arg, State#state.handler_state]) of
 		{ok, HandlerState0}				-> {noreply, State#state{ handler_state=HandlerState0 }};
+		{shutdown, HandlerState0}		-> {stop, normal, State#state{ handler_state=HandlerState0 }};
 		{reply, Reply, HandlerState0} 	->
 			Reply0 = escape(iolist_to_binary(Reply)),
 			case Pid of
