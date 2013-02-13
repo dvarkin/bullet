@@ -32,7 +32,6 @@ init(_Transport, Req, Opts) ->
 		{undefined, _} ->
 			{Method, Req0} = cowboy_http_req:method(Req),
 			{S, Req1} = cowboy_http_req:qs_val(<<"s">>, Req0),
-			io:format("s: ~s~n", [S]),
 
 			case Method of
 				'GET'	-> init_poll(Req1, Opts, try_decode_pid(S));

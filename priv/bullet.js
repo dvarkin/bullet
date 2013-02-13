@@ -51,10 +51,10 @@
 				ret = window.WebSocket;
 			}
 
-			if (window.MozWebSocket
-					&& navigator.userAgent.indexOf("Firefox/6.0") == -1){
-				ret = window.MozWebSocket;
-			}
+//			if (window.MozWebSocket
+//					&& navigator.userAgent.indexOf("Firefox/6.0") == -1){
+//				ret = window.MozWebSocket;
+//			}
 
 			if (ret){
 				return {'heart': true, 'transport': ret};
