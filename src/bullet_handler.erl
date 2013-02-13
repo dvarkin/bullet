@@ -32,6 +32,7 @@ init(_Transport, Req, Opts) ->
 		{undefined, _} ->
 			{Method, Req0} = cowboy_http_req:method(Req),
 			{S, Req1} = cowboy_http_req:qs_val(<<"s">>, Req0),
+			io:format("s: ~s~n", [S]),
 
 			case Method of
 				'GET'	-> init_poll(Req1, Opts, try_decode_pid(S));
@@ -101,7 +102,7 @@ terminate(_, _) -> ok.
 generate_key() -> crypto:strong_rand_bytes(?keylen).
 
 try_decode_pid(S) when is_binary(S) ->
-	case base64:decode(S) of
+	case base64url_decode(S) of
 		<<K:?keylen/binary, PidBinary/binary>> ->
 			try binary_to_term(PidBinary) of
 				P when is_pid(P)	-> {K, P};
@@ -114,7 +115,18 @@ try_decode_pid(_)	-> undefined.
 
 encode_pid(Key, Pid) when is_pid(Pid) and is_binary(Key) ->
 	PidBinary = term_to_binary(Pid),
-	base64:encode(<<Key/binary, PidBinary/binary>>).
+	base64url_encode(<<Key/binary, PidBinary/binary>>).
+
+base64url_encode(Data) ->
+	binary:replace(
+		binary:replace(
+			binary:replace(base64:encode(Data), <<$+>>, <<$->>, [global]), <<$/>>, <<$_>>, [global]), <<$=>>, <<$.>>, [global]).
+
+base64url_decode(Data) ->
+	base64:decode(
+	binary:replace(
+		binary:replace(
+			binary:replace(Data, <<$->>, <<$+>>, [global]), <<$_>>, <<$/>>, [global]), <<$.>>, <<$=>>, [global])).
 
 %% Websocket.
 

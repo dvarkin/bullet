@@ -51,10 +51,10 @@
 				ret = window.WebSocket;
 			}
 
-//			if (window.MozWebSocket
-//					&& navigator.userAgent.indexOf("Firefox/6.0") == -1){
-//				ret = window.MozWebSocket;
-//			}
+			if (window.MozWebSocket
+					&& navigator.userAgent.indexOf("Firefox/6.0") == -1){
+				ret = window.MozWebSocket;
+			}
 
 			if (ret){
 				return {'heart': true, 'transport': ret};
@@ -76,7 +76,7 @@
 					}
 
 					var fakeurl = url.replace('ws:', 'http:').replace('wss:', 'https:');
-					if (this.ssid) fakeurl += '?s='+ encodeURIComponent(this.ssid);
+					if (this.ssid) fakeurl += '?s=' + this.ssid;
 
 					$.ajax({
 						async: false,
@@ -114,7 +114,7 @@
 
 			function poll(){
 				var fakeurl = url.replace('ws:', 'http:').replace('wss:', 'https:');
-				if (fake.ssid) fakeurl += '?s='+ encodeURIComponent(fake.ssid);
+				if (fake.ssid) fakeurl += '?s=' + fake.ssid;
 
 				xhr = $.ajax({
 					type: 'GET',
