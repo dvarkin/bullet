@@ -104,10 +104,12 @@
 				onclose: function(){}
 			};
 
+			var repl = function (s, x) { if (x == "n") { return "\n" } else { return "\\" }; };
+
 			function decode(data, onframe) {
 				var frames = data.split('\n');
 				for (i = 0; i < frames.length; i++) {
-					var framedata = frames[i].replace('\\n', '\n').replace('\\\\', '\\');
+					var framedata = frames[i].replace(/\\(n|\\)/g, repl);
 					if (framedata.length > 0) { onframe(framedata); }
 				}
 			};

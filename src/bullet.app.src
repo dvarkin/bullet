@@ -15,7 +15,7 @@
 {application, bullet, [
 	{description,
 		"Simple, reliable, efficient streaming between JS and Cowboy."},
-	{vsn, "0.3.4"},
+	{vsn, "0.3.5"},
 	{modules, []},
 	{registered, []},
 	{applications, [

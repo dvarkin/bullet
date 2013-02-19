@@ -107,7 +107,7 @@ terminate(_, #state{ handler=Handler, handler_state=HandlerState }) ->
 
 %% utilities:
 escape(Data) ->
-	binary:replace(binary:replace(Data, <<?slash>>, <<?slash, ?slash>>, [global]), <<?term>>, <<?slash, ?term>>, [global]).
+	binary:replace(binary:replace(Data, <<?slash>>, <<?slash, ?slash>>, [global]), <<?term>>, <<?slash, $n>>, [global]).
 
 reset_timer(#state{ timer=undefined } = S, poll_wait) -> S#state{ timer=erlang:start_timer(erlang:get(poll_wait_timeout), self(), poll_wait) };
 reset_timer(#state{ timer=undefined } = S, poll) 	-> S#state{ timer=erlang:start_timer(erlang:get(poll_timeout), self(), poll) };
